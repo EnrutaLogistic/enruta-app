@@ -119,3 +119,14 @@ body{
 /* Sello de versión: en la barra superior va discreto y en línea; en la
    pantalla de acceso, centrado al pie. */
 .ver-foot{text-align:center;font-size:10px;color:var(--muted);opacity:.55;margin:16px 0 0}
+
+/* Marca del producto */
+.marca{display:flex;align-items:center;gap:3px;font-size:10px;color:var(--muted);
+  text-transform:uppercase;letter-spacing:.04em;margin-top:2px}
+
+/* Buscador */
+.busc{padding-left:32px;padding-right:30px}
+.busc-icon{position:absolute;left:11px;top:50%;transform:translateY(-50%);
+  color:var(--muted);pointer-events:none}
+.busc-x{position:absolute;right:8px;top:50%;transform:translateY(-50%);border:0;
+  background:none;color:var(--muted);cursor:pointer;padding:4px;display:flex}
