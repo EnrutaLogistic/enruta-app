@@ -127,12 +127,13 @@ export const db = {
    * datos no le manda datos de otro cliente. */
   async loadAll() {
     try {
-      const [clients, profiles, products, orders, movements] = await Promise.all([
+      const [clients, profiles, products, orders, movements, brands] = await Promise.all([
         supabase.from('clients').select('*').order('name'),
         supabase.from('profiles').select('id, username, name, role, client_id').order('name'),
         supabase.from('products').select('*').order('name'),
         supabase.from('orders').select('*').order('created_at', { ascending: false }),
         supabase.from('movements').select('*').order('created_at', { ascending: false }).limit(500),
+        supabase.from('brands').select('*').order('name'),
       ]);
 
       return {
@@ -142,7 +143,9 @@ export const db = {
           users: rowsOrThrow(profiles).map((u) => ({ ...u, clientId: u.client_id })),
           products: rowsOrThrow(products).map((p) => ({
             ...p, clientId: p.client_id, minStock: p.min_stock, photo: p.photo_url,
+            brandId: p.brand_id,
           })),
+          brands: rowsOrThrow(brands).map((b) => ({ ...b, clientId: b.client_id })),
           orders: rowsOrThrow(orders).map((o) => ({
             ...o, clientId: o.client_id, createdAt: o.created_at,
           })),
@@ -182,7 +185,7 @@ export const db = {
   },
 
   /* Recepción de material: la suma la hace el servidor en una transacción. */
-  async receiveStock({ clientId, productId, name, unit, minStock, qty, photo }) {
+  async receiveStock({ clientId, productId, name, unit, minStock, qty, photo, brandId, brandNew }) {
     const { error } = await supabase.rpc('receive_stock', {
       p_client: clientId,
       p_product: productId || null,
@@ -191,6 +194,8 @@ export const db = {
       p_min: Number(minStock) || 0,
       p_qty: Number(qty),
       p_photo: photo || null,
+      p_brand: brandId || null,
+      p_brand_new: brandNew || null,
     });
     return error ? error.message : null;
   },
