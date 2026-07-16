@@ -240,7 +240,7 @@ function TopBar({ name, onLogout }) {
     <header className="topbar">
       <div className="topbar-in">
         <div className="brand">
-          <img className="logo" src="/logo.webp" alt="" />
+          <img className="logo" src="/icon-192.png" alt="" />
           <h1 className="disp">Enruta Logistic</h1>
         </div>
         <div className="who">
@@ -289,7 +289,7 @@ function Setup({ onCreate, onBack }) {
     <div className="center">
       <div style={{ width: "100%", maxWidth: 340 }}>
         <div className="brand" style={{ flexDirection: "column", gap: 10, marginBottom: 6 }}>
-          <img className="logo-xl" src="/logo.webp" alt="Enruta Logistic" />
+          <img className="logo-xl" src="/icon-192.png" alt="Enruta Logistic" />
           <h1 className="disp" style={{ fontSize: 22, textTransform: "uppercase", letterSpacing: ".06em", margin: 0, textAlign: "center" }}>Enruta Logistic App</h1>
         </div>
         <p className="sub" style={{ textAlign: "center", marginBottom: 18 }}>
@@ -335,7 +335,7 @@ function Login({ onLogin, onSetup }) {
     <div className="center">
       <div style={{ width: "100%", maxWidth: 340 }}>
         <div className="brand" style={{ flexDirection: "column", gap: 10, marginBottom: 6 }}>
-          <img className="logo-xl" src="/logo.webp" alt="Enruta Logistic" />
+          <img className="logo-xl" src="/icon-192.png" alt="Enruta Logistic" />
           <h1 className="disp" style={{ fontSize: 22, textTransform: "uppercase", letterSpacing: ".06em", margin: 0, textAlign: "center" }}>Enruta Logistic App</h1>
         </div>
         <p className="sub" style={{ textAlign: "center", marginBottom: 18 }}>Inicia sesión para continuar</p>
