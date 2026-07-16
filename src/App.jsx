@@ -14,9 +14,11 @@ import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
   Package, ClipboardList, Plus, Minus, Trash2, AlertTriangle,
   Box, ArrowDownToLine, CheckCircle2, Loader2, LogOut, Users, Building2,
-  Lock, User as UserIcon, History, MapPin, X, Camera, ShieldAlert, Search, Tag
+  Lock, User as UserIcon, History, MapPin, X, Camera, ShieldAlert, Search, Tag,
+  Bell, BellOff
 } from "lucide-react";
 import { db, auth, CONFIG_OK } from "./lib/db.js";
+import { push } from "./lib/push.js";
 
 /* ========================= CONSTANTES ========================= */
 
@@ -726,6 +728,57 @@ function Clientes({ clients, onAdd }) {
   );
 }
 
+/* Interruptor de notificaciones. Va por DISPOSITIVO, no por cuenta: si entras
+ * desde el móvil y desde el PC, hay que activarlo en cada uno. Es como funciona
+ * el push en la web, no una limitación nuestra. */
+function Notificaciones() {
+  const [estado, setEstado] = useState("cargando");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+
+  useEffect(() => { push.estado().then(setEstado); }, []);
+
+  const cambiar = async () => {
+    setBusy(true); setErr("");
+    const e = estado === "activadas" ? await push.desactivar() : await push.activar();
+    setBusy(false);
+    if (e) { setErr(e); return; }
+    setEstado(await push.estado());
+  };
+
+  if (estado === "cargando") return null;
+
+  const activas = estado === "activadas";
+  const noVa = estado === "no-disponible";
+
+  return (
+    <div className="card" style={{ marginBottom: 10 }}>
+      <div className="row">
+        <div style={{ display: "flex", gap: 9, minWidth: 0 }}>
+          {activas ? <Bell size={15} style={{ color: "var(--ok)", flex: "none", marginTop: 2 }} />
+                   : <BellOff size={15} style={{ color: "var(--muted)", flex: "none", marginTop: 2 }} />}
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontSize: 13.5, fontWeight: 600 }}>Avisos de pedido nuevo</div>
+            <div className="sub" style={{ fontSize: 11 }}>
+              {noVa ? "No disponibles en este dispositivo"
+                    : activas ? "Activados en este dispositivo"
+                              : "Desactivados en este dispositivo"}
+            </div>
+          </div>
+        </div>
+        {!noVa && (
+          <button className={`btn mini ${activas ? "" : "btn-hi"}`} onClick={cambiar} disabled={busy}
+            style={activas ? { background: "var(--card)", border: "1px solid var(--line)", color: "var(--muted)" } : {}}>
+            {busy ? <Loader2 size={13} className="animate-spin" /> : activas ? "Desactivar" : "Activar"}
+          </button>
+        )}
+      </div>
+      {noVa && <p className="sub" style={{ fontSize: 11, marginTop: 8 }}>{push.motivoNoDisponible()}</p>}
+      {err && <p className="err" style={{ marginTop: 8 }}>{err}</p>}
+    </div>
+  );
+}
+
 function Usuarios({ users, clients, onAdd, onRemove }) {
   const [f, setF] = useState({ name: "", username: "", password: "", role: "gestion", clientId: "" });
   const [err, setErr] = useState("");
@@ -740,6 +793,8 @@ function Usuarios({ users, clients, onAdd, onRemove }) {
 
   return (
     <div>
+      <Notificaciones />
+
       {users.map((u) => (
         <div key={u.id} className="card" style={{ padding: "11px 13px" }}>
           <div className="row">
