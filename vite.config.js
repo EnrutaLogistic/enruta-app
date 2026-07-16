@@ -21,7 +21,7 @@ export default defineConfig({
       // Así no dependemos del módulo virtual 'virtual:pwa-register', que hacía
       // fallar el build en Netlify.
       injectRegister: 'script',
-      includeAssets: ['apple-touch-icon.png'],
+      includeAssets: ['apple-touch-icon.png', 'push-sw.js'],
       manifest: {
         name: 'Enruta Logistic App',
         short_name: 'Enruta',
@@ -39,6 +39,9 @@ export default defineConfig({
         ]
       },
       workbox: {
+        // Carga nuestro trozo de service worker para las notificaciones push.
+        // El resto del sw lo genera el plugin; así no hay que mantenerlo a mano.
+        importScripts: ['/push-sw.js'],
         skipWaiting: true,
         clientsClaim: true,
         cleanupOutdatedCaches: true,
