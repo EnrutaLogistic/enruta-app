@@ -21,7 +21,7 @@ export default defineConfig({
       // Así no dependemos del módulo virtual 'virtual:pwa-register', que hacía
       // fallar el build en Netlify.
       injectRegister: 'script',
-      includeAssets: ['apple-touch-icon.png', 'logo.webp'],
+      includeAssets: ['apple-touch-icon.png'],
       manifest: {
         name: 'Enruta Logistic App',
         short_name: 'Enruta',
