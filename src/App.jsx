@@ -64,7 +64,6 @@ export default function App() {
   const [state, setState] = useState({ clients: [], users: [], products: [], orders: [], movements: [] });
   const [session, setSession] = useState(null);   // perfil del usuario
   const [booting, setBooting] = useState(true);
-  const [setup, setSetup] = useState(false);
   const [loadError, setLoadError] = useState("");
   const [banner, setBanner] = useState("");
 
@@ -146,12 +145,6 @@ export default function App() {
     return error || null;
   };
 
-  const signupFirstAdmin = async (username, password, name) => {
-    const e = await db.signUpFirst(username, password, name);
-    if (e) return e;
-    return await login(username, password);
-  };
-
   /* Antes que nada: ¿está configurado el hosting? Es el fallo más probable al
    * desplegar y sin este aviso solo verías una pantalla en blanco. */
   if (!CONFIG_OK) {
@@ -183,11 +176,7 @@ export default function App() {
     return <div className="center"><Loader2 className="animate-spin" size={26} /></div>;
   }
 
-  if (!session) {
-    return setup
-      ? <Setup onCreate={signupFirstAdmin} onBack={() => setSetup(false)} />
-      : <Login onLogin={login} onSetup={() => setSetup(true)} />;
-  }
+  if (!session) return <Login onLogin={login} />;
 
   if (loadError) {
     return (
@@ -280,44 +269,7 @@ function Thumb({ src, size = 44 }) {
 
 /* ========================= SETUP / LOGIN ========================= */
 
-function Setup({ onCreate, onBack }) {
-  const [f, setF] = useState({ name: "", username: "", password: "" });
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState("");
-  const ok = f.name.trim() && f.username.trim() && f.password.length >= 6;
-  return (
-    <div className="center">
-      <div style={{ width: "100%", maxWidth: 340 }}>
-        <div className="brand" style={{ flexDirection: "column", gap: 10, marginBottom: 6 }}>
-          <img className="logo-xl" src="/icon-192.png" alt="Enruta Logistic" />
-          <h1 className="disp" style={{ fontSize: 22, textTransform: "uppercase", letterSpacing: ".06em", margin: 0, textAlign: "center" }}>Enruta Logistic App</h1>
-        </div>
-        <p className="sub" style={{ textAlign: "center", marginBottom: 18 }}>
-          Crea tu cuenta de administrador.<br />Solo funciona la primera vez, cuando aún no hay nadie.
-        </p>
-
-        <div className="stack">
-          <input className="in" placeholder="Tu nombre" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} />
-          <input className="in" placeholder="Usuario" value={f.username} onChange={(e) => setF({ ...f, username: e.target.value })} />
-          <input className="in" type="password" placeholder="Contraseña" value={f.password} onChange={(e) => setF({ ...f, password: e.target.value })} />
-          {err && <p className="err">{err}</p>}
-          <button className="btn btn-hi btn-w" disabled={!ok || busy}
-            onClick={async () => {
-              setBusy(true);
-              const e = await onCreate(f.username.trim(), f.password, f.name.trim());
-              setBusy(false);
-              if (e) setErr(e);
-            }}>
-            {busy ? <Loader2 size={14} className="animate-spin" /> : "Crear cuenta y entrar"}
-          </button>
-          <button className="btn btn-out mini" onClick={onBack}>Ya tengo cuenta</button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function Login({ onLogin, onSetup }) {
+function Login({ onLogin }) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [err, setErr] = useState("");
@@ -349,9 +301,6 @@ function Login({ onLogin, onSetup }) {
             {busy ? <Loader2 size={14} className="animate-spin" /> : <><Lock size={13} /> Entrar</>}
           </button>
         </div>
-        <button className="btn btn-out mini" style={{ marginTop: 14 }} onClick={onSetup}>
-          Primera vez: crear cuenta de administrador
-        </button>
         <p className="ver-foot mono">v {__APP_VERSION__}</p>
       </div>
     </div>
