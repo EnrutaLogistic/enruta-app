@@ -14,7 +14,7 @@ import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
   Package, ClipboardList, Plus, Minus, Trash2, AlertTriangle,
   Box, ArrowDownToLine, CheckCircle2, Loader2, LogOut, Users, Building2,
-  Lock, User as UserIcon, History, MapPin, X, Camera, ShieldAlert
+  Lock, User as UserIcon, History, MapPin, X, Camera, ShieldAlert, Search, Tag
 } from "lucide-react";
 import { db, auth, CONFIG_OK } from "./lib/db.js";
 
@@ -27,6 +27,26 @@ const SERVICES = ["10H", "14H", "19H", "48H"];
 const URGENT_SERVICES = ["10H", "14H"];
 const PHOTO_MAX_PX = 360;
 const PHOTO_QUALITY = 0.6;
+
+/* Búsqueda que ignora acentos y mayúsculas: en un almacén se escribe "raton"
+ * y el producto se llama "RATÓN". Si no normalizamos, el buscador no serviría. */
+const norm = (t) => (t || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
+
+const esBajo = (p) => p.stock <= p.minStock;
+
+/* Filtra por texto (nombre o marca) y por marca, y deja SIEMPRE delante lo que
+ * está bajo de stock: es lo que hay que mirar primero. */
+function filtrarProductos(products, brands, q, brandId) {
+  const nombreMarca = (id) => brands.find((b) => b.id === id)?.name || "";
+  const t = norm(q);
+  return products
+    .filter((p) => {
+      if (brandId !== "all" && (p.brandId || "") !== brandId) return false;
+      if (!t) return true;
+      return norm(p.name).includes(t) || norm(nombreMarca(p.brandId)).includes(t);
+    })
+    .sort((a, b) => (esBajo(b) ? 1 : 0) - (esBajo(a) ? 1 : 0) || a.name.localeCompare(b.name, "es"));
+}
 
 const fmtDate = (iso) =>
   new Date(iso).toLocaleDateString("es-ES", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
@@ -61,7 +81,7 @@ function compressImage(file) {
 /* ========================= APP ========================= */
 
 export default function App() {
-  const [state, setState] = useState({ clients: [], users: [], products: [], orders: [], movements: [] });
+  const [state, setState] = useState({ clients: [], users: [], products: [], orders: [], movements: [], brands: [] });
   const [session, setSession] = useState(null);   // perfil del usuario
   const [booting, setBooting] = useState(true);
   const [loadError, setLoadError] = useState("");
@@ -215,6 +235,7 @@ export default function App() {
       ) : (
         <Cliente
           products={state.products} orders={state.orders} photos={photos}
+          brands={state.brands} movements={state.movements}
           onCreateOrder={createOrder}
         />
       )}
@@ -310,7 +331,7 @@ function Login({ onLogin }) {
 /* ========================= GESTIÓN ========================= */
 
 function Gestion(props) {
-  const { clients, users, products, orders, movements, photos } = props;
+  const { clients, users, products, orders, movements, photos, brands } = props;
   const [tab, setTab] = useState("pedidos");
   const [cf, setCf] = useState("all");
   const byClient = (x) => cf === "all" || x.clientId === cf;
@@ -338,7 +359,8 @@ function Gestion(props) {
         {tab === "pedidos" && <Pedidos orders={orders.filter(byClient)} clients={clients} photos={photos}
           advance={props.advance} setTracking={props.setTracking} />}
         {tab === "stock" && <Stock clients={clients} cf={cf} products={products.filter(byClient)} allProducts={products}
-          photos={photos} receiveStock={props.receiveStock} setPhoto={props.setPhoto} removeProduct={props.removeProduct} />}
+          brands={brands} photos={photos} receiveStock={props.receiveStock}
+          setPhoto={props.setPhoto} removeProduct={props.removeProduct} />}
         {tab === "historial" && <Historial movements={movements.filter(byClient)} clients={clients} />}
         {tab === "clientes" && <Clientes clients={clients} onAdd={props.addClient} />}
         {tab === "usuarios" && <Usuarios users={users} clients={clients} onAdd={props.addUser} onRemove={props.removeUser} />}
@@ -358,6 +380,38 @@ function Track({ status }) {
         {STATUS_FLOW.map((s, k) => <span key={s} className={k === i ? "on" : ""}>{STATUS_LABEL[s]}</span>)}
       </div>
     </>
+  );
+}
+
+/* Buscador + filtro de marca. Mismo componente en gestión y en cliente: si
+ * mañana cambia, cambia en los dos sitios a la vez. */
+function Buscador({ q, setQ, brand, setBrand, brands, total, mostrados }) {
+  return (
+    <div style={{ marginBottom: 10 }}>
+      <div style={{ position: "relative" }}>
+        <Search size={14} className="busc-icon" />
+        <input className="in busc" placeholder="Buscar producto o marca…"
+          value={q} onChange={(e) => setQ(e.target.value)} />
+        {q && (
+          <button className="busc-x" onClick={() => setQ("")} aria-label="Limpiar">
+            <X size={13} />
+          </button>
+        )}
+      </div>
+      {brands.length > 0 && (
+        <select className="sel" style={{ marginTop: 6 }} value={brand}
+          onChange={(e) => setBrand(e.target.value)}>
+          <option value="all">Todas las marcas</option>
+          <option value="">Sin marca</option>
+          {brands.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+        </select>
+      )}
+      {(q || brand !== "all") && (
+        <p className="sub" style={{ fontSize: 11, margin: "6px 0 0" }}>
+          <span className="mono">{mostrados}</span> de <span className="mono">{total}</span> productos
+        </p>
+      )}
+    </div>
   );
 }
 
@@ -470,16 +524,24 @@ function PhotoField({ value, onPick, label = "Añadir foto del producto" }) {
   );
 }
 
-function Stock({ clients, cf, products, allProducts, photos, receiveStock, setPhoto, removeProduct }) {
+function Stock({ clients, cf, products, allProducts, brands, photos, receiveStock, setPhoto, removeProduct }) {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [mode, setMode] = useState("existing");
-  const [f, setF] = useState({ clientId: cf !== "all" ? cf : "", productId: "", name: "", unit: "uds", minStock: "", qty: "", photo: null });
+  const [brandMode, setBrandMode] = useState("existing");
+  const [f, setF] = useState({ clientId: cf !== "all" ? cf : "", productId: "", name: "", unit: "uds", minStock: "", qty: "", photo: null, brandId: "", brandNew: "" });
   const [err, setErr] = useState("");
+  const [q, setQ] = useState("");
+  const [brandF, setBrandF] = useState("all");
 
   if (!clients.length) return <Empty icon={<Building2 size={30} />} title="Crea un cliente primero" desc="Ve a la pestaña Clientes para dar de alta al primero." />;
 
   const list = allProducts.filter((p) => p.clientId === f.clientId);
+  // Marcas del cliente elegido en el formulario, y las del filtro de arriba.
+  const marcasForm = brands.filter((b) => b.clientId === f.clientId);
+  const marcasFiltro = cf === "all" ? brands : brands.filter((b) => b.clientId === cf);
+  const visibles = filtrarProductos(products, brands, q, brandF);
+  const marcaDe = (id) => brands.find((b) => b.id === id)?.name || "";
 
   const submit = async () => {
     if (!f.clientId) return setErr("Selecciona un cliente");
@@ -495,18 +557,27 @@ function Stock({ clients, cf, products, allProducts, photos, receiveStock, setPh
       // La foto solo viaja al dar de alta un producto nuevo. Si no, una foto
       // que quedara en el formulario se le pegaría al producto equivocado.
       photo: mode === "new" ? f.photo : null,
+      brandId: brandMode === "existing" ? f.brandId : null,
+      brandNew: brandMode === "new" ? f.brandNew.trim() : null,
     });
     setBusy(false);
     if (e) return setErr(e);
-    setF({ clientId: f.clientId, productId: "", name: "", unit: "uds", minStock: "", qty: "", photo: null });
+    setF({ clientId: f.clientId, productId: "", name: "", unit: "uds", minStock: "", qty: "", photo: null, brandId: "", brandNew: "" });
     setErr(""); setOpen(false);
   };
 
   return (
     <div>
+      {products.length > 0 && (
+        <Buscador q={q} setQ={setQ} brand={brandF} setBrand={setBrandF}
+          brands={marcasFiltro} total={products.length} mostrados={visibles.length} />
+      )}
+
       {!products.length ? (
         <Empty icon={<Box size={30} />} title="Sin productos" desc="Registra una recepción para crear el primero." />
-      ) : products.map((p) => {
+      ) : !visibles.length ? (
+        <Empty icon={<Search size={30} />} title="Sin resultados" desc="Ningún producto coincide con la búsqueda." />
+      ) : visibles.map((p) => {
         const low = p.stock <= p.minStock;
         const pct = p.minStock > 0 ? Math.min(100, (p.stock / (p.minStock * 3)) * 100) : Math.min(100, p.stock * 2);
         return (
@@ -515,9 +586,12 @@ function Stock({ clients, cf, products, allProducts, photos, receiveStock, setPh
               <Thumb src={p.photo} />
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div className="row">
-                  <div style={{ display: "flex", alignItems: "center", gap: 5, minWidth: 0 }}>
-                    <span style={{ fontSize: 14, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.name}</span>
-                    {low && <AlertTriangle size={12} style={{ color: "var(--alert)", flex: "none" }} />}
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 5, minWidth: 0 }}>
+                      <span style={{ fontSize: 14, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.name}</span>
+                      {low && <AlertTriangle size={12} style={{ color: "var(--alert)", flex: "none" }} />}
+                    </div>
+                    {p.brandId && <div className="marca"><Tag size={9} /> {marcaDe(p.brandId)}</div>}
                   </div>
                   <div style={{ display: "flex", alignItems: "center", gap: 7, flex: "none" }}>
                     {cf === "all" && <span className="sub" style={{ fontSize: 10.5 }}>{clients.find((c) => c.id === p.clientId)?.name}</span>}
@@ -569,6 +643,32 @@ function Stock({ clients, cf, products, allProducts, photos, receiveStock, setPh
                   <input className="in mono" type="number" placeholder="Mín. aviso" value={f.minStock} onChange={(e) => setF({ ...f, minStock: e.target.value })} />
                 </div>
                 <PhotoField value={f.photo} onPick={(d) => setF({ ...f, photo: d })} />
+              </>
+            )}
+
+            {/* La marca vale tanto al crear producto nuevo como para ponérsela
+                a uno que ya tienes: al recepcionar, si eliges marca, se le
+                asigna. Así los productos antiguos se van etiquetando solos. */}
+            {f.clientId && (
+              <>
+                <div className="seg">
+                  <button className={brandMode === "existing" ? "on" : ""}
+                    onClick={() => setBrandMode("existing")}>Marca existente</button>
+                  <button className={brandMode === "new" ? "on" : ""}
+                    onClick={() => setBrandMode("new")}>Marca nueva</button>
+                </div>
+                {brandMode === "existing" ? (
+                  <select className="sel" value={f.brandId}
+                    onChange={(e) => setF({ ...f, brandId: e.target.value })}>
+                    <option value="">
+                      {marcasForm.length ? "Sin marca" : "Este cliente aún no tiene marcas"}
+                    </option>
+                    {marcasForm.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+                  </select>
+                ) : (
+                  <input className="in" placeholder="Marca nueva (ej: Royal Canin)"
+                    value={f.brandNew} onChange={(e) => setF({ ...f, brandNew: e.target.value })} />
+                )}
               </>
             )}
 
@@ -683,27 +783,33 @@ function Usuarios({ users, clients, onAdd, onRemove }) {
 
 /* ========================= CLIENTE ========================= */
 
-function Cliente({ products, orders, photos, onCreateOrder }) {
+function Cliente({ products, orders, photos, brands, movements, onCreateOrder }) {
   const [tab, setTab] = useState("nuevo");
+  const bajos = products.filter(esBajo).length;
   return (
     <>
       <div className="tabs">
         <Tab on={tab === "nuevo"} onClick={() => setTab("nuevo")} icon={<Plus size={14} />} label="Nuevo pedido" />
         <Tab on={tab === "pedidos"} onClick={() => setTab("pedidos")} icon={<ClipboardList size={14} />} label="Mis pedidos"
           count={orders.filter((o) => o.status !== "entregado").length} />
-        <Tab on={tab === "stock"} onClick={() => setTab("stock")} icon={<Package size={14} />} label="Mi stock" />
+        <Tab on={tab === "stock"} onClick={() => setTab("stock")} icon={<Package size={14} />} label="Mi stock"
+          count={bajos} />
+        <Tab on={tab === "historial"} onClick={() => setTab("historial")} icon={<History size={14} />} label="Historial" />
       </div>
       <div className="wrap">
-        {tab === "nuevo" && <NuevoPedido products={products} photos={photos} onCreateOrder={onCreateOrder} />}
+        {tab === "nuevo" && <NuevoPedido products={products} photos={photos} brands={brands} onCreateOrder={onCreateOrder} />}
         {tab === "pedidos" && <MisPedidos orders={orders} photos={photos} />}
-        {tab === "stock" && <MiStock products={products} photos={photos} />}
+        {tab === "stock" && <MiStock products={products} photos={photos} brands={brands} />}
+        {tab === "historial" && <MiHistorial movements={movements} />}
       </div>
     </>
   );
 }
 
-function NuevoPedido({ products, photos, onCreateOrder }) {
+function NuevoPedido({ products, photos, brands, onCreateOrder }) {
   const [cart, setCart] = useState({});
+  const [q, setQ] = useState("");
+  const [brandF, setBrandF] = useState("all");
   const [service, setService] = useState("");
   const [r, setR] = useState({ name: "", address: "", city: "", zip: "", phone: "" });
   const [notes, setNotes] = useState("");
@@ -740,12 +846,34 @@ function NuevoPedido({ products, photos, onCreateOrder }) {
     setSent(true); setTimeout(() => setSent(false), 3000);
   };
 
+  const visibles = filtrarProductos(products, brands, q, brandF);
+  const marcaDe = (id) => brands.find((b) => b.id === id)?.name || "";
+  const enCarrito = Object.keys(cart).length;
+
   return (
     <div>
       <h2 className="h2 disp">Productos</h2>
-      {products.map((p) => {
+
+      <Buscador q={q} setQ={setQ} brand={brandF} setBrand={setBrandF}
+        brands={brands} total={products.length} mostrados={visibles.length} />
+
+      {/* Si estás filtrando, lo que ya has añadido al carrito puede quedar
+          fuera de la lista. Este aviso evita que envíes un pedido creyendo
+          que llevas solo lo que estás viendo. */}
+      {enCarrito > 0 && visibles.length < products.length && (
+        <p className="sub" style={{ fontSize: 11, marginTop: -4, marginBottom: 8 }}>
+          Llevas <span className="mono">{enCarrito}</span> producto(s) en el pedido, incluidos los que oculta el filtro.
+        </p>
+      )}
+
+      {!visibles.length && (
+        <Empty icon={<Search size={30} />} title="Sin resultados" desc="Ningún producto coincide con la búsqueda." />
+      )}
+
+      {visibles.map((p) => {
         const qty = cart[p.id] || 0;
         const none = p.stock <= 0;
+        const low = esBajo(p);
         return (
           <div key={p.id} className="card" style={{ padding: "10px 12px" }}>
             <div className="row">
@@ -809,6 +937,21 @@ function MisPedidos({ orders, photos }) {
       </div>
       <Track status={o.status} />
       <ItemLines items={o.items} photos={photos} />
+
+      {o.recipient && (
+        <div className="note" style={{ marginTop: 9 }}>
+          <div style={{ display: "flex", gap: 5 }}>
+            <MapPin size={11} style={{ marginTop: 2, flex: "none" }} />
+            <span>
+              <strong style={{ color: "var(--ink)" }}>{o.recipient.name}</strong><br />
+              {o.recipient.address}<br />
+              <span className="mono">{o.recipient.zip}</span> {o.recipient.city} · <span className="mono">{o.recipient.phone}</span>
+            </span>
+          </div>
+          {o.notes && <div style={{ marginTop: 5, fontStyle: "italic" }}>{o.notes}</div>}
+        </div>
+      )}
+
       <div style={{ marginTop: 9 }}>
         {o.tracking ? (
           <div className="chip chip-tr"><span><strong>{o.tracking.carrier}</strong> <span className="mono">{o.tracking.number}</span></span></div>
@@ -820,17 +963,88 @@ function MisPedidos({ orders, photos }) {
   ))}</div>;
 }
 
-function MiStock({ products, photos }) {
+function MiStock({ products, photos, brands }) {
+  const [q, setQ] = useState("");
+  const [brandF, setBrandF] = useState("all");
+
   if (!products.length) return <Empty icon={<Package size={30} />} title="Sin stock" desc="Tu proveedor aún no ha registrado productos para ti." />;
-  return <div>{products.map((p) => (
-    <div key={p.id} className="card" style={{ padding: "10px 12px" }}>
-      <div className="row">
-        <div style={{ display: "flex", gap: 10, alignItems: "center", minWidth: 0 }}>
-          <Thumb src={p.photo} size={38} />
-          <span style={{ fontSize: 13.5, fontWeight: 600 }}>{p.name}</span>
+
+  // filtrarProductos ya deja delante lo que está bajo de stock.
+  const visibles = filtrarProductos(products, brands, q, brandF);
+  const marcaDe = (id) => brands.find((b) => b.id === id)?.name || "";
+  const bajos = products.filter(esBajo);
+
+  return (
+    <div>
+      {bajos.length > 0 && (
+        <div className="warn">
+          <AlertTriangle size={14} style={{ flex: "none", marginTop: 1 }} />
+          <span>
+            <strong>{bajos.length === 1 ? "1 producto está bajo" : `${bajos.length} productos están bajos`} de stock.</strong>{" "}
+            {bajos.map((p) => p.name).join(", ")}. Salen los primeros de la lista.
+          </span>
         </div>
-        <span className="mono" style={{ fontSize: 13.5, color: "var(--muted)" }}>{p.stock} {p.unit}</span>
-      </div>
+      )}
+
+      <Buscador q={q} setQ={setQ} brand={brandF} setBrand={setBrandF}
+        brands={brands} total={products.length} mostrados={visibles.length} />
+
+      {!visibles.length ? (
+        <Empty icon={<Search size={30} />} title="Sin resultados" desc="Ningún producto coincide con la búsqueda." />
+      ) : visibles.map((p) => {
+        const low = esBajo(p);
+        const pct = p.minStock > 0 ? Math.min(100, (p.stock / (p.minStock * 3)) * 100) : Math.min(100, p.stock * 2);
+        return (
+          <div key={p.id} className="card">
+            <div style={{ display: "flex", gap: 11 }}>
+              <Thumb src={p.photo} />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 5, minWidth: 0 }}>
+                    <span style={{ fontSize: 14, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.name}</span>
+                    {low && <AlertTriangle size={12} style={{ color: "var(--alert)", flex: "none" }} />}
+                  </div>
+                  {p.brandId && <div className="marca"><Tag size={9} /> {marcaDe(p.brandId)}</div>}
+                </div>
+                <div className="bar"><i className={low ? "low" : ""} style={{ width: `${pct}%` }} /></div>
+                <div className="sub" style={{ fontSize: 11.5, color: low ? "var(--alert)" : "var(--muted)" }}>
+                  <span className="mono" style={{ fontWeight: 600 }}>{p.stock}</span> {p.unit}
+                  {p.minStock > 0 ? <> · mín. <span className="mono">{p.minStock}</span></> : null}
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })}
     </div>
-  ))}</div>;
+  );
+}
+
+/* Historial del cliente: sus entradas de material y sus salidas por pedido.
+   Igual que el de gestión pero sin la columna de cliente: aquí solo hay uno. */
+function MiHistorial({ movements }) {
+  if (!movements.length) {
+    return <Empty icon={<History size={30} />} title="Sin movimientos"
+      desc="Aquí verás cada entrada de material y cada salida por pedido." />;
+  }
+  return (
+    <div>
+      {movements.map((m) => (
+        <div key={m.id} className="card" style={{ padding: "10px 13px" }}>
+          <div className="row">
+            <div style={{ minWidth: 0 }}>
+              <div style={{ fontSize: 13.5, fontWeight: 500 }}>{m.productName}</div>
+              <div className="sub" style={{ fontSize: 11 }}>
+                {m.type === "entrada" ? "Entrada de material" : "Salida por pedido"} ·{" "}
+                <span className="mono">{fmtDate(m.at)}</span>
+              </div>
+            </div>
+            <span className="mono" style={{ fontSize: 14, fontWeight: 600, color: m.type === "entrada" ? "var(--ok)" : "var(--alert)" }}>
+              {m.type === "entrada" ? "+" : "−"}{m.qty}
+            </span>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
 }
