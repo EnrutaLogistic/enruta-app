@@ -121,21 +121,6 @@ export const db = {
    * la base de datos da el rol 'gestion' solo si la tabla de perfiles está
    * vacía. En cuanto exista, desactivas el registro público en Supabase y
    * esta puerta se cierra para siempre. */
-  async signUpFirst(username, password, name) {
-    const { error } = await supabase.auth.signUp({
-      email: toEmail(username),
-      password,
-      options: { data: { username: username.toLowerCase(), name } },
-    });
-    if (!error) return null;
-    if (/already|registrad|exists/i.test(error.message)) return 'Ese usuario ya existe';
-    if (/password/i.test(error.message)) return 'La contraseña debe tener al menos 6 caracteres';
-    if (/disabled|not allowed/i.test(error.message)) {
-      return 'El registro está desactivado. Ya hay un administrador: entra con tu usuario.';
-    }
-    return error.message;
-  },
-
   /* Una sola llamada devuelve todo lo que el usuario TIENE DERECHO a ver.
    * El filtrado por cliente lo hace Postgres con las políticas RLS, no la
    * app. Aunque alguien manipule este archivo en su navegador, la base de
