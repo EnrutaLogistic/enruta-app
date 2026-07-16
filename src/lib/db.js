@@ -9,8 +9,15 @@
 
 import { createClient } from '@supabase/supabase-js';
 
-const URL = import.meta.env.VITE_SUPABASE_URL;
-const KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
+/* Limpieza defensiva. Estos valores se pegan a mano en el panel del hosting y
+ * es facilísimo colar un espacio o dejar la barra final que Supabase muestra
+ * en su web. Con la barra, las peticiones salen con doble barra
+ * (https://x.supabase.co//auth/v1/...) y el servidor responde "Invalid path
+ * specified in request URL", que no hay quien lo relacione con la causa.
+ * Un .trim() y un .replace() ahorran una tarde. */
+const clean = (v) => (typeof v === 'string' ? v.trim() : '');
+const URL = clean(import.meta.env.VITE_SUPABASE_URL).replace(/\/+$/, '');
+const KEY = clean(import.meta.env.VITE_SUPABASE_ANON_KEY);
 
 /* Si faltan las variables del hosting, NO lanzamos una excepción aquí: eso
  * mataría el módulo al importarlo y dejaría una pantalla en blanco, sin
@@ -84,6 +91,29 @@ const rowsOrThrow = ({ data, error }) => {
   return data || [];
 };
 
+/* Traduce un fallo de la Edge Function a algo accionable. Antes esto devolvía
+ * "Revisa la conexión" para todo, que es la peor respuesta posible: oculta si
+ * la función no está desplegada, si te ha caducado la sesión o si el usuario
+ * ya existía. El código de estado lo dice, así que se dice. */
+async function errorDeFuncion(error, porDefecto) {
+  const status = error?.context?.status;
+
+  // Lo primero, el motivo que manda la propia función ("Ese usuario ya existe")
+  try {
+    const body = await error.context.json();
+    if (body?.error) return body.error;
+  } catch { /* no venía cuerpo legible: seguimos con el código */ }
+
+  if (status === 404) {
+    return 'No existe la función "usuarios" en Supabase (404). Compruébalo en Edge Functions: el nombre debe ser exactamente "usuarios", en minúsculas.';
+  }
+  if (status === 401) return 'Tu sesión ha caducado. Sal y vuelve a entrar.';
+  if (status === 403) return 'No autorizado: tu usuario no consta como gestión.';
+  if (status === 500) return 'La función "usuarios" ha fallado por dentro. Mira sus registros en Supabase → Edge Functions → usuarios → Logs.';
+  if (status) return `${porDefecto} (error ${status})`;
+  return `${porDefecto} (${error?.message || 'no se pudo contactar con el servidor'})`;
+}
+
 export const db = {
   /* Alta del PRIMER administrador. Es el único usuario que no puede pasar por
    * la Edge Function, porque la función exige que quien llame ya sea gestor y
@@ -154,14 +184,7 @@ export const db = {
     const { data, error } = await supabase.functions.invoke('usuarios', {
       body: { action: 'create', username, password, name, role, clientId },
     });
-    if (error) {
-      // El cuerpo del error trae el motivo real (usuario repetido, etc.)
-      try {
-        const body = await error.context?.json();
-        if (body?.error) return body.error;
-      } catch { /* nos quedamos con el mensaje genérico */ }
-      return 'No se pudo crear el usuario. Revisa la conexión.';
-    }
+    if (error) return await errorDeFuncion(error, 'No se pudo crear el usuario');
     return data?.error || null;
   },
 
@@ -169,13 +192,7 @@ export const db = {
     const { data, error } = await supabase.functions.invoke('usuarios', {
       body: { action: 'delete', id },
     });
-    if (error) {
-      try {
-        const body = await error.context?.json();
-        if (body?.error) return body.error;
-      } catch { /* nos quedamos con el mensaje genérico */ }
-      return 'No se pudo borrar el usuario.';
-    }
+    if (error) return await errorDeFuncion(error, 'No se pudo borrar el usuario');
     return data?.error || null;
   },
 
