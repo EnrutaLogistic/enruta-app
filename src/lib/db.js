@@ -114,6 +114,20 @@ async function errorDeFuncion(error, porDefecto) {
   return `${porDefecto} (${error?.message || 'no se pudo contactar con el servidor'})`;
 }
 
+/* Tiempo real: la base de datos avisa a la app cuando algo cambia, sin
+ * recargar. Respeta las mismas reglas RLS, así que un cliente solo recibe
+ * avisos de SUS filas: no se entera de que existe otro cliente. */
+export function escucharCambios(cb) {
+  const canal = supabase
+    .channel('enruta-cambios')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, cb)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'products' }, cb)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'movements' }, cb)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'brands' }, cb)
+    .subscribe();
+  return () => { supabase.removeChannel(canal); };
+}
+
 export const db = {
   /* Alta del PRIMER administrador. Es el único usuario que no puede pasar por
    * la Edge Function, porque la función exige que quien llame ya sea gestor y
@@ -148,6 +162,11 @@ export const db = {
           brands: rowsOrThrow(brands).map((b) => ({ ...b, clientId: b.client_id })),
           orders: rowsOrThrow(orders).map((o) => ({
             ...o, clientId: o.client_id, createdAt: o.created_at,
+            // numeric puede llegar como texto: lo pasamos a número aquí y no
+            // en cada sitio que lo pinte.
+            cod: o.cod_amount == null ? null : Number(o.cod_amount),
+            incidentNote: o.incident_note, incidentAt: o.incident_at,
+            cancelNote: o.cancel_note, cancelledAt: o.cancelled_at,
           })),
           movements: rowsOrThrow(movements).map((m) => ({
             ...m, clientId: m.client_id, productId: m.product_id,
@@ -213,12 +232,13 @@ export const db = {
   /* Crear pedido: comprueba stock y lo descuenta en la misma transacción.
    * Si no hay suficiente, el servidor lo rechaza. Ya no depende de que los
    * botones + / − del móvil estén bien puestos. */
-  async createOrder(items, recipient, notes, service) {
+  async createOrder(items, recipient, notes, service, cod) {
     const { error } = await supabase.rpc('create_order', {
       p_items: items,
       p_recipient: recipient,
       p_notes: notes || '',
       p_service: service,
+      p_cod: cod > 0 ? Number(cod) : null,
     });
     // Los mensajes de create_order ya vienen escritos para que los lea una
     // persona ("No hay stock suficiente de EMPANADA: quedan 3"). No los
@@ -226,8 +246,32 @@ export const db = {
     return error ? error.message : null;
   },
 
-  async advance(orderId, nextStatus) {
-    const { error } = await supabase.from('orders').update({ status: nextStatus }).eq('id', orderId);
+  /* El estado ya no se toca a pelo: pasa por set_order_status, que valida el
+   * flujo en el servidor. Así la app no puede dejar un pedido en un estado
+   * imposible ni saltarse pasos. */
+  async setStatus(orderId, status, note) {
+    const { error } = await supabase.rpc('set_order_status', {
+      p_order: orderId,
+      p_status: status,
+      p_note: note || null,
+    });
+    return error ? error.message : null;
+  },
+
+  /* Anular: devuelve el stock y deja rastro. Lo valida el servidor, que es
+   * quien decide si este usuario puede anular este pedido y en qué estado. */
+  async cancelOrder(orderId, note) {
+    const { error } = await supabase.rpc('cancel_order', { p_order: orderId, p_note: note || null });
+    return error ? error.message : null;
+  },
+
+  /* Ajuste de stock: roturas, mermas, inventario. Siempre con motivo. */
+  async adjustStock(productId, delta, reason) {
+    const { error } = await supabase.rpc('adjust_stock', {
+      p_product: productId,
+      p_delta: Number(delta),
+      p_reason: reason,
+    });
     return error ? error.message : null;
   },
 
